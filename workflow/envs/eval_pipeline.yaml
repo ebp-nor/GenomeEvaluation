@@ -1,0 +1,15 @@
+name: eval_pipeline
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - busco=5
+  - snakemake=8
+  - seqkit
+  - bcftools
+  - merqury
+  - minimap2
+  - bwa
+  - samtools
+  - pretextsnapshot
+  - pretextmap

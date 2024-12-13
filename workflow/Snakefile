@@ -1,0 +1,684 @@
+#Get input files
+pacbio = config["pacbio"]
+pacbio_path = "/".join(pacbio.split("/")[:-1])+"/"
+pacbio_filename = pacbio.removeprefix(pacbio_path)
+hicF = config["hicF"]
+hicR = config["hicR"]
+#HAPS = ["hap1", "hap2"]
+#Check if ONT reads are defined
+ont = config["ont"]
+#if ont:
+#    hifiasm_ont = f" --ul {ont}"
+#else:
+#    hifiasm_ont = ""
+#    ont = []
+
+print()
+print(f"Input PacBio reads: {pacbio}")
+print(f"Input HiC reads: {hicF}, {hicR}")
+if ont:
+    print(f"Input ONT reads: {ont}")
+print()
+
+#Define rules that do not need to be submitted to the cluster
+#localrules: concat_scaff, update_pretext, print_versions
+
+#Summary rule to run full pipeline (pre-assembly, assembly, scaffolding)
+rule all:
+    input:
+        "results/stats/pb.stats",
+        "results/chrs/stats",
+        "results/stats/hap1_asm.stats",
+        "results/stats/hap2_asm.stats",
+        expand("results/busco/busco_hap1_{lineage}", lineage=config["busco_lineage"]),
+        expand("results/busco/busco_hap2_{lineage}", lineage=config["busco_lineage"]),
+        "results/hic.merqury",
+        "results/hifi.merqury",
+        "results/paf/report",
+        "results/flagger/output/corrected.bam",
+        "results/flagger/output/flagger.collapsed.bed",
+        "results/hic/hap1_bwa_map_snapshots/hap1_bwa_map_FullMap.png",
+        "results/hic/hap2_bwa_map_snapshots/hap2_bwa_map_FullMap.png",
+        "results/mmseqs_nt/hap1_mmseqs_nt.out",
+        "results/mmseqs_nt/hap2_mmseqs_nt.out",
+        "results/mmseqs_uniprot/hap1_mmseqs_proteomes.out",
+        "results/mmseqs_uniprot/hap2_mmseqs_proteomes.out",
+#General rule for running only primary assembly and busco
+#rule assembly:
+#    input:
+#        expand("results/assembly/busco_assembly.hic.{hap}.p_ctg_{lineage}", lineage=config["busco_lineage"], hap=HAPS),
+#        "software_versions.txt"
+  
+rule preprocess:
+    output:
+        hap1 = "results/hap1.fa",
+        hap2 = "results/hap2.fa",
+        both = "results/both.fa",
+    input:
+        hap1_asm = config["hap1"],      
+        hap2_asm = config["hap2"],      
+    shell:
+        r"""
+        cp {input.hap1_asm} {output.hap1}
+        cp {input.hap2_asm} {output.hap2}
+        cat {input.hap1_asm}|sed "s/>/>h1_/g" > {output.both}
+        cat {input.hap2_asm}|sed "s/>/>h2_/g" >> {output.both}      
+        """
+
+rule reads_statistics:
+    output:
+        pb_stats = "results/stats/pb.stats",
+        h1_stats = "results/stats/hic1.stats",
+        h2_stats = "results/stats/hic2.stats"
+    input:
+        pacbio = pacbio,
+        hicF = hicF,
+        hicR = hicR
+    run:
+        if ont:
+            shell("seqkit stats -a {ont} > results/stats/ont.stats")
+        shell("seqkit stats -a {input.pacbio} > {output.pb_stats}")
+        shell("seqkit stats -a {input.hicF} > {output.h1_stats}")
+        shell("seqkit stats -a {input.hicR} > {output.h2_stats}")
+
+#Run busco on assembly (could most likely be done in a better way
+rule busco_hap1:
+    output:
+        directory(expand("results/busco/busco_hap1_{lineage}", lineage=config["busco_lineage"]))
+    input:
+        assembly = config["hap1"],
+        busco = expand("{busco_db_dir}/{lineage}_odb10", busco_db_dir=config["busco_db_dir"], lineage=config["busco_lineage"])
+    resources:
+        mem_per_cpu = config["busco_mem"],
+        ntasks = config["busco_threads"]
+    params:
+        lineage = config["busco_lineage"],
+        threads = config["busco_threads"]
+    shell:
+        r"""
+        busco \
+            -i {input.assembly} \
+            -l {input.busco} \
+            -c {params.threads} \
+            -m genome \
+            --offline \
+            --out_path results/busco \
+            -o busco_hap1_{params.lineage} \
+            --download_path /tmp
+        """
+
+rule busco_hap2:
+    output:
+        directory(expand("results/busco/busco_hap2_{lineage}", lineage=config["busco_lineage"]))
+    input:
+        assembly = config["hap2"],
+        busco = expand("{busco_db_dir}/{lineage}_odb10", busco_db_dir=config["busco_db_dir"], lineage=config["busco_lineage"])
+    resources:
+        mem_per_cpu = config["busco_mem"],
+        ntasks = config["busco_threads"]
+    params:
+        lineage = config["busco_lineage"],
+        threads = config["busco_threads"]
+    shell:
+        r"""
+	busco \
+            -i {input.assembly} \
+            -l {input.busco} \
+            -c {params.threads} \
+	    -m genome \
+            --offline \
+            --out_path results/busco \
+            -o busco_hap2_{params.lineage} \
+            --download_path /tmp
+        """
+
+
+rule asm_stats:
+    output:
+        hap1_stats = "results/stats/hap1_asm.stats",
+        hap2_stats = "results/stats/hap2_asm.stats",
+    input:
+        hap1_asm = "results/hap1.fa",
+        hap2_asm = "results/hap2.fa",
+    resources:
+        mem_per_cpu = "6G",
+        ntasks = 1
+    shell:
+        r"""
+        gfastats {input.hap1_asm} > {output.hap1_stats}
+        gfastats {input.hap2_asm} > {output.hap2_stats}
+        """
+
+rule chr_stats:
+    output:
+        stats = "results/chrs/stats",
+        hap1_chrs = "results/chrs/hap1.chrs",
+        hap2_chrs = "results/chrs/hap2.chrs",
+        hap1_chrs_fa = "results/chrs/hap1.chrs.fa",
+        hap2_chrs_fa = "results/chrs/hap2.chrs.fa",
+        hap1_non_chrs = "results/chrs/hap1.non_chrs",
+        hap2_non_chrs = "results/chrs/hap2.non_chrs",
+        hap1_non_chrs_fa = "results/chrs/hap1.non_chrs.fa",
+        hap2_non_chrs_fa = "results/chrs/hap2.non_chrs.fa",
+        hap1_unplaced = "results/chrs/hap1.unplaced.fa",
+        hap2_unplaced = "results/chrs/hap2.unplaced.fa",
+    input:
+        hap1_asm = "results/hap1.fa",
+        hap2_asm = "results/hap2.fa",
+    shell:
+        r"""
+        set +e
+              
+        samtools faidx {input.hap1_asm}
+        samtools faidx {input.hap2_asm}
+
+        grep SUPER {input.hap1_asm}.fai | awk -F'\t' '{{print $1":1-"$2}}' > {output.hap1_chrs}
+        grep MT {input.hap1_asm}.fai | awk -F'\t' '{{print $1":1-"$2}}' >> {output.hap1_chrs}
+        grep SUPER {input.hap2_asm}.fai | awk -F'\t' '{{print $1":1-"$2}}' > {output.hap2_chrs}
+        grep MT {input.hap2_asm}.fai | awk -F'\t' '{{print $1":1-"$2}}' >> {output.hap2_chrs}
+        grep -v SUPER {input.hap1_asm}.fai |grep -v MT| awk -F'\t' '{{print $1":1-"$2}}' > {output.hap1_non_chrs}
+        grep -v SUPER {input.hap2_asm}.fai |grep -v MT| awk -F'\t' '{{print $1":1-"$2}}' > {output.hap2_non_chrs}
+        
+        samtools faidx {input.hap1_asm} -r {output.hap1_chrs} | cut -f 1 -d ':' > {output.hap1_chrs_fa}
+        samtools faidx {input.hap2_asm} -r {output.hap2_chrs} | cut -f 1 -d ':' > {output.hap2_chrs_fa}
+        samtools faidx {input.hap1_asm} -r {output.hap1_non_chrs} | cut -f 1 -d ':' > {output.hap1_non_chrs_fa}
+        samtools faidx {input.hap2_asm} -r {output.hap2_non_chrs} | cut -f 1 -d ':' > {output.hap2_non_chrs_fa}
+
+        echo "amount bases in hap1 and hap2 chrs" |tee {output.stats}
+        hap1_chrs=$(grep -v ">" {output.hap1_chrs_fa} | tr -d '\n' |wc -c )
+        hap2_chrs=$(grep -v ">" {output.hap2_chrs_fa} | tr -d '\n' |wc -c)
+        echo "hap1:" |tee -a {output.stats}
+        echo $hap1_chrs |tee -a {output.stats}
+        echo "hap2:" |tee -a {output.stats}
+        echo $hap2_chrs |tee -a {output.stats}
+        echo "amount of bases in hap1 and hap2" |tee -a  {output.stats}
+        hap1=$(grep -v ">" {input.hap1_asm} | tr -d '\n' |wc -c)
+        hap2=$(grep -v ">" {input.hap2_asm} | tr -d '\n' |wc -c)
+        echo "hap1:" |tee -a {output.stats}
+        echo $hap1 |tee -a  {output.stats}
+        echo "hap2:" |tee -a {output.stats}
+        echo $hap2 |tee -a  {output.stats}
+        echo "amount of bases in chrs, hap1 and hap2" |tee -a  {output.stats}
+        echo "hap1:" |tee -a {output.stats}
+        echo "scale=4;$hap1_chrs/$hap1" |bc |tee -a  {output.stats}
+        echo "hap2:" |tee -a {output.stats}
+        echo "scale=4;$hap2_chrs/$hap2" |bc |tee -a  {output.stats}
+
+
+        echo ">unplaced_hap1" > {output.hap1_unplaced}
+        grep -v ">" {output.hap1_non_chrs_fa} |fold >> {output.hap1_unplaced}
+        echo ">unplaced_hap2" > {output.hap2_unplaced}
+        grep -v ">" {output.hap2_non_chrs_fa} |fold >> {output.hap2_unplaced}        
+        """
+
+#Create Meryl Database
+rule create_meryl_db_hic:
+    output:
+        reads_meryl = directory("results/hic.meryl"),
+    input:
+        r1 = config["hicF"],
+        r2 = config["hicR"],
+    resources:
+        ntasks = config["meryl_threads"]
+    params:
+        k = config["meryl_k"],
+        t = config["meryl_threads"],
+        m = config["meryl_memory"],
+    shell:
+        r"""
+        cd results
+        meryl \
+            k={params.k} \
+            threads={params.t} \
+            memory={params.m} \
+            count \
+            output r1.meryl \
+            {input.r1}
+        meryl \
+            k={params.k} \
+            threads={params.t} \
+            memory={params.m} \
+            count \
+            output r2.meryl \
+            {input.r2} 
+        meryl union-sum output hic.meryl r1.meryl r2.meryl
+        rm -r r1.meryl r2.meryl
+        """
+        
+rule create_meryl_db_hifi:
+    output:
+        reads_meryl = directory("results/hifi.meryl"),
+    input:
+        pb = config["pacbio"],
+    resources:
+        ntasks = config["meryl_threads"]
+    params:
+        k = config["meryl_k"],
+        t = config["meryl_threads"],
+        m = config["meryl_memory"],
+    shell:
+        r"""
+        cd results
+        meryl \
+            k={params.k} \
+            threads={params.t} \
+            memory={params.m} \
+            count \
+            output hifi.meryl \
+            {input.pb}
+        """
+
+rule merqury_hic:
+    output:
+        directory("results/hic.merqury"),
+    input:
+        meryl = "results/hic.meryl",
+        hap1_asm = "results/hap1.fa",
+        hap2_asm = "results/hap2.fa",        
+    shell:
+        r"""
+        cd results
+        mkdir -p hic.merqury
+        cd hic.merqury
+        merqury.sh ../../{input.meryl} ../../{input.hap1_asm} ../../{input.hap2_asm} hic
+        """
+
+rule merqury_hifi:
+    output:
+        directory("results/hifi.merqury"),
+    input:
+        meryl = "results/hifi.meryl",
+        hap1_asm = "results/hap1.fa",
+        hap2_asm = "results/hap2.fa",
+    shell:
+        r"""
+        cd results
+        mkdir -p hifi.merqury
+        cd hifi.merqury
+        merqury.sh ../../{input.meryl} ../../{input.hap1_asm} ../../{input.hap2_asm} hifi
+	"""
+#mummer does not work well at all. Does not scale
+#rule mummer:
+#    output:
+#        "results/mummer/mummer.report",
+#    input:
+#        hap1_asm = "results/hap1.fa",
+#        hap2_asm = "results/hap2.fa",
+#    resources:
+#        time = config["mummer_time"],
+#        mem_per_cpu = config["mummer_mem"],
+#        partition = config["mummer_partition"],
+#        ntasks = config["mummer_threads"]
+#    params:
+#        l = config["mummer_length"],
+#        c = config["mummer_cluster"],
+#        t = config["mummer_threads"],
+#    shell:
+#        r"""
+#        cd results
+#        mkdir -p mummer
+#        cd mummer
+#        nucmer -t 20 --maxmatch -l {params.l} -c {params.c} ../../{input.hap1_asm} ../../{input.hap2_asm} -p mummer
+#        dnadiff -d mummer.delta -p mummer        
+#        """
+
+rule paftools:
+    output:
+        "results/paf/report"
+    input:
+        hap1_asm = "results/hap1.fa",
+        hap2_asm = "results/hap2.fa",
+    resources:
+        time = config["minimap_time"],
+        mem_per_cpu = config["minimap_mem"],
+        partition = config["minimap_partition"],
+        ntasks = config["minimap_threads"]
+    params:
+        l = config["ali_len_cov"],
+        L = config["ali_len_call"],
+        q = config["min_q"],
+        t = config["minimap_threads"],
+        g = config["short_gap_thres"],
+        prefix = config["prefix"],
+    shell:
+        r"""
+        cd results
+        mkdir -p paf
+        cd paf
+        minimap2 -t {params.t} -cx asm5 --cs ../../{input.hap1_asm} ../../{input.hap2_asm} | sort -k6,6 -k8,8n  > {params.prefix}.paf
+        cat {params.prefix}.paf |paftools.js call - 1> /dev/null 2> report
+        """
+
+
+rule map_for_flagger:
+    output:
+        "results/flagger/input/sorted_qname.bam",
+        "results/flagger/input/both.fa",
+    input:
+        both = "results/both.fa",
+        pb = config["pacbio"],
+    resources:
+        ntasks = config["flagger_threads"]
+    params:
+        t = config["flagger_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p flagger
+        cd flagger
+        mkdir -p input
+        mkdir -p output
+        cp ../../{input.both} input/both.fa
+        meryl count k=15 output merylDB input/both.fa
+        meryl print greater-than distinct=0.9998 merylDB > repetitive_k15.txt
+  
+        # alignment with winnowmap (map-ont)
+        winnowmap -t {params.t} -W repetitive_k15.txt -ax map-pb -Y -L --eqx --cs -I8g input/both.fa  {input.pb} | \
+         samtools view -hb | samtools sort - > input/pb.bam
+
+        samtools index input/pb.bam
+
+        samtools sort -n -@{params.t} input/pb.bam > input/sorted_qname.bam
+
+        samtools faidx input/both.fa
+        """
+
+rule secphase:
+    output:
+        "results/flagger/output/corrected.bam",
+    input:
+        fasta = "results/flagger/input/both.fa",
+        bam = "results/flagger/input/sorted_qname.bam",
+    resources:
+        ntasks = config["flagger_threads"]
+    params:
+        t = config["flagger_threads"],
+    shell:
+        r"""
+        cd results
+        cd flagger
+        singularity run  -B $PWD/input/:/input/ /cluster/projects/nn8013k/opt/flagger/secphase_v0.4.3.sif  \
+        secphase_index \
+        -i /input/sorted_qname.bam
+
+       singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/ /cluster/projects/nn8013k/opt/flagger/secphase_v0.4.3.sif  \
+       secphase --hifi \
+       -i /input/sorted_qname.bam \
+       -f /input/both.fa \
+       --outDir /output \
+       --prefix  flagger \
+       --threads {params.t} > secphase.out 2> secphase.err
+
+       singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/ /cluster/projects/nn8013k/opt/flagger/secphase_v0.4.3.sif  \
+       correct_bam \
+       -i /input/sorted_qname.bam \
+       -P /output/flagger.out.log \
+       -o /output/corrected.bam  \
+       --primaryOnly 1> correct_bam.out 2> correct_bam.err
+       """
+
+rule deepvariant:
+    output:
+        "results/flagger/output/flagger.vcf",
+    input:
+        bam = "results/flagger/output/corrected.bam",
+        fasta = "results/flagger/input/both.fa",
+    resources:
+        ntasks = config["flagger_threads"]
+    params:
+        t = config["flagger_threads"],
+    shell:
+        r"""
+        cd results
+        cd flagger        
+        export TMPDIR="$PWD/tmp_dir"
+        mkdir -p $TMPDIR
+
+        samtools sort -@{params.t} output/corrected.bam > output/corrected.sort.bam
+        samtools index output/corrected.sort.bam
+        
+        singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/,$TMPDIR:$TMPDIR /cluster/projects/nn8013k/opt/flagger/deepvariant_1.4.0.sif  \
+        /opt/deepvariant/bin/run_deepvariant \
+        --model_type="PACBIO" \
+        --ref="/input/both.fa" \
+        --reads="/output/corrected.sort.bam" \
+        --intermediate_results_dir "/output/intermediate_results_dir" \
+        --output_vcf="/output/inter.vcf" \
+        --make_examples_extra_args="keep_supplementary_alignments=true,min_mapping_quality=0" \
+        --call_variants_extra_args="use_openvino=false" \
+        --num_shards={params.t} \
+        --dry_run=false  1> deepvariant.out 2> deepvariant.err
+
+        bcftools view -Ov -f PASS -m2 -M2 -v snps -e 'FORMAT/VAF<0.3 | FORMAT/GQ<10' output/inter.vcf > output/flagger.vcf
+        """
+
+rule flagger:
+    output:
+        "results/flagger/output/flagger.collapsed.bed",
+        "results/flagger/output/flagger.error.bed",
+        "results/flagger/output/flagger.haploid.bed",
+        "results/flagger/output/flagger.duplicated.bed",
+    input:
+        "results/flagger/output/flagger.vcf"
+    resources:
+        ntasks = config["flagger_threads"]
+    params:
+        t = config["flagger_threads"],
+    shell:
+        r"""
+        cd results
+        cd flagger
+        export TMPDIR="$PWD/tmp_dir"
+        mkdir -p $TMPDIR
+
+        set +e
+        singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/,$TMPDIR:$TMPDIR /cluster/projects/nn8013k/opt/flagger/flagger_v0.3.2.sif  \
+        filter_alt_reads \
+        -i "/output/corrected.bam" \
+        -o "/output/alt_filtered.bam" \
+        -f "/output/alt.bam" \
+        -v "/output/flagger.vcf" \
+        -t {params.t} \
+        -m 1000  \
+        -r 0.4 1> filter_alt_reads.out 2> filter_alt_reads.err
+
+        ##MODE 1, using all alignments https://github.com/mobinasri/flagger#5-mode_1-using-all-alignments
+
+        #https://github.com/mobinasri/flagger/tree/main/docs/flagger
+        ## Find base-level coverages
+        samtools depth -aa -Q 0 input/pb.bam > input/pb.depth 
+
+        ## Convert depth to cov
+
+        singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/,$TMPDIR:$TMPDIR /cluster/projects/nn8013k/opt/flagger/flagger_v0.3.2.sif  \
+        depth2cov \
+        -d /input/pb.depth \
+        -f /input/both.fa.fai \
+        -o /output/pb.cov 1> depth2cov.out 2> depth2cov.err
+
+         #https://github.com/mobinasri/flagger/tree/main/docs/flagger#2-coverage-distribution-and-fitting-the-mixture-model
+         singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/,$TMPDIR:$TMPDIR /cluster/projects/nn8013k/opt/flagger/flagger_v0.3.2.sif  \
+         cov2counts \
+         -i /output/pb.cov \
+         -o /output/pb.counts 1> cov2counts.out 2> cov2counts.err
+
+         cov=$(cut -f 3 input/pb.depth |sort |uniq -c |sort -k1,1nr |head -n 1 |cut -f 2 -d " ")         
+         echo ${{cov}}
+         
+          singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/,$TMPDIR:$TMPDIR /cluster/projects/nn8013k/opt/flagger/flagger_v0.3.2.sif  \
+          python3 /home/programs/src/fit_gmm.py \
+          --counts /output/pb.counts \
+          --cov ${{cov}} \
+          --output /output/pb.table 1> fit_gmm.out 2> fit_gmm.err
+
+         singularity run  -B $PWD/input/:/input/,$PWD/output/:/output/,$TMPDIR:$TMPDIR  /cluster/projects/nn8013k/opt/flagger/flagger_v0.3.2.sif  \
+         find_blocks_from_table \
+         -c /output/pb.cov \
+         -t /output/pb.table \
+         -p /output/flagger 1> find_blocks_from_table.out 2> find_blocks_from_table.err
+        """
+
+rule hic_snapshot_hap1:
+    output:
+        "results/hic/hap1_bwa_map_snapshots/hap1_bwa_map_FullMap.png"
+    input:
+        assembly = config["hap1"],
+        r1 = config["hicF"],
+        r2 = config["hicR"],
+    resources:
+        ntasks = config["flagger_threads"]
+    params:
+        t = config["flagger_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p hic
+        cd hic
+        bwa index {input.assembly}
+
+        bwa mem -t {params.t} -5SPM {input.assembly} \
+        {input.r1} {input.r2} \
+        |samtools view -buS - | samtools sort -@3 -n -T hap1_tmp_n -O bam - \
+        |samtools fixmate -mr - -|samtools sort -@3 -T hap1_hic_tmp -O bam - | samtools markdup -rsS - -  2> hap1_hic_markdup.stats |samtools sort -@3  -T hap1_temp_n -O bam > hap1_hic_markdup.sort.bam
+
+        samtools view -h hap1_hic_markdup.sort.bam | PretextMap -o hap1_bwa_map.pretext --sortby length --sortorder descend --mapq 0 && rm hap1_hic_markdup.sort.bam
+        PretextSnapshot -m hap1_bwa_map.pretext --sequences "=full" 
+        """
+
+
+rule hic_snapshot_hap2:
+    output:
+        "results/hic/hap2_bwa_map_snapshots/hap2_bwa_map_FullMap.png"
+    input:
+        assembly = config["hap2"],
+        r1 = config["hicF"],
+        r2 = config["hicR"],
+    resources:
+        ntasks = config["flagger_threads"]
+    params:
+        t = config["flagger_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p hic
+        cd hic
+        bwa index {input.assembly}
+
+        bwa mem -t {params.t} -5SPM {input.assembly} \
+        {input.r1} {input.r2} \
+        |samtools view -buS - | samtools sort -@3 -n -T hap2_tmp_n -O bam - \
+        |samtools fixmate -mr - -|samtools sort -@3 -T hap2_hic_tmp -O bam - | samtools markdup -rsS - -  2> hap2_hic_markdup.stats |samtools sort -@3  -T hap2_temp_n -O bam > hap2_hic_markdup.sort.bam
+
+        samtools view -h hap2_hic_markdup.sort.bam | PretextMap -o hap2_bwa_map.pretext --sortby length --sortorder descend --mapq 0 && rm hap2_hic_markdup.sort.bam
+        PretextSnapshot -m hap2_bwa_map.pretext --sequences "=full" 
+        """
+
+rule create_db:
+    output:
+        "results/mmseqs_db/hap1DB",
+        "results/mmseqs_db/hap2DB",
+    input:
+        hap1_asm = "results/hap1.fa",
+        hap2_asm = "results/hap2.fa",
+    shell:
+        r"""
+        cd results
+        mkdir -p mmseqs_db
+        cd mmseqs_db
+        mmseqs createdb ../../{input.hap1_asm} hap1DB 
+        mmseqs createdb ../../{input.hap2_asm} hap2DB 
+        """
+
+rule blobtools_uniprot_hap1:
+    output:
+        "results/mmseqs_uniprot/hap1_mmseqs_proteomes.out",
+    input:
+        hap1_db = "results/mmseqs_db/hap1DB",
+    resources:
+        ntasks = config["mmseqs_threads"],
+        mem = config["mmseqs_mem"],
+    params:
+        t =  config["mmseqs_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p mmseqs_uniprot
+        cd mmseqs_uniprot
+        mkdir -p $USERWORK/$SLURM_JOB_ID
+        mmseqs search -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 1 ../../{input.hap1_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap1_results_proteomes $USERWORK/$SLURM_JOB_ID/hap1_prot_tmp
+
+        mmseqs convertalis ../../{input.hap1_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap1_results_proteomes hap1_mmseqs_proteomes.out \
+        --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
+        """
+
+rule blobtools_uniprot_hap2:
+    output:
+        "results/mmseqs_uniprot/hap2_mmseqs_proteomes.out",
+    input:
+        hap2_db = "results/mmseqs_db/hap2DB",
+    resources:
+        ntasks = config["mmseqs_threads"],
+        mem = config["mmseqs_mem"],
+    params:
+        t =  config["mmseqs_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p mmseqs_uniprot
+        cd mmseqs_uniprot
+        mkdir -p $USERWORK/$SLURM_JOB_ID/
+        mmseqs search -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 1 ../../{input.hap2_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap2_results_proteomes $USERWORK/$SLURM_JOB_ID/hap2_prot_tmp
+
+        mmseqs convertalis ../../{input.hap2_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap2_results_proteomes hap2_mmseqs_proteomes.out \
+        --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
+        """
+
+rule blobtools_nt_hap1:
+    output:
+        "results/mmseqs_nt/hap1_mmseqs_nt.out",
+    input:
+        hap1_db = "results/mmseqs_db/hap1DB",
+    resources:
+        ntasks = config["mmseqs_threads"],
+        mem = config["mmseqs_bigmem"],
+        partition = "bigmem",
+    params:
+        t =  config["mmseqs_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p mmseqs_nt
+        cd mmseqs_nt
+        mkdir -p $USERWORK/$SLURM_JOB_ID/
+        mmseqs search --split-memory-limit 1500G -e 1e-25  --threads 64 -s 5.0 -a --max-accept 10 ../../{input.hap1_db} /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB  \
+        hap1_results_nt $USERWORK/$SLURM_JOB_ID/hap1_nt_tmp --search-type 3
+
+        mmseqs convertalis ../../{input.hap1_db} \
+        /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB \
+        hap1_results_nt hap1_mmseqs_nt.out --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
+        """
+
+rule blobtools_nt_hap2:
+    output:
+        "results/mmseqs_nt/hap2_mmseqs_nt.out",
+    input:
+        hap2_db = "results/mmseqs_db/hap2DB",
+    resources:
+        ntasks = config["mmseqs_threads"],
+        mem = config["mmseqs_bigmem"],
+        partition = "bigmem",
+    params:
+        t =  config["mmseqs_threads"],
+    shell:
+        r"""
+        cd results
+        mkdir -p mmseqs_nt     
+        cd mmseqs_nt     
+        mkdir -p $USERWORK/$SLURM_JOB_ID/
+        mmseqs search --split-memory-limit 1500G -e 1e-25  --threads 64 -s 5.0 -a --max-accept 10 ../../{input.hap2_db} /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB  \
+        hap2_results_nt $USERWORK/$SLURM_JOB_ID/hap2_nt_tmp --search-type 3
+ 
+        mmseqs convertalis ../../{input.hap2_db} \
+        /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB \
+        hap2_results_nt hap2_mmseqs_nt.out --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
+        """

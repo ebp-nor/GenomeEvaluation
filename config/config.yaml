@@ -1,0 +1,42 @@
+### Working directory ###
+
+prefix: "mRanTar1"
+hap1: "/cluster/projects/nn8013k/results/species/Rangifer_tarandus/mRanTar2/results/curated/mRanTar2.1.hap1.fa"
+hap2: "/cluster/projects/nn8013k/results/species/Rangifer_tarandus/mRanTar2/results/curated/mRanTar2.1.hap2.fa"
+
+#Define the absolute path to the PACBIO reads
+pacbio: "/cluster/projects/nn8013k/results/species/Rangifer_tarandus/mRanTar2/genomic_data/pacbio/mRanTar2.hifi.fastq.gz"
+#Define the absolute path to the HIC reads, both forward and reverse (hicF and hicR)
+hicF: "/cluster/projects/nn8013k/results/species/Rangifer_tarandus/mRanTar2/genomic_data/hic/2-02-Reindeer-2023-51-321_S53_L002_R1_001.fastq.gz"
+hicR: "/cluster/projects/nn8013k/results/species/Rangifer_tarandus/mRanTar2/genomic_data/hic/2-02-Reindeer-2023-51-321_S53_L002_R2_001.fastq.gz"
+ont: ""
+
+### BUSCO parameters ###
+busco_db_dir: "/cluster/projects/nn8013k/opt/busco_dbs/lineages"
+busco_lineage: "mammalia" #BUSCO lineage for analysis
+busco_threads: "10" #threads
+busco_mem: "17G" #memory requirements
+
+### Meryl parameters ###
+meryl_threads: "10"
+meryl_k: "31"
+meryl_memory: "38g"
+
+### minimap and paftools parameters ###
+minimap_threads: "16"
+minimap_partition: "normal"
+minimap_time: "96:0:0"
+minimap_mem: "4G"
+ali_len_cov: "10000"
+ali_len_call: "50000"
+min_q: "5"
+short_gap_thres: "50"
+
+
+### Flagger parameters ###
+flagger_threads: "20"
+
+### mmseqs parameters
+mmseqs_threads: "40"
+mmseqs_mem: "70G"
+mmseqs_bigmem: "2500G"
