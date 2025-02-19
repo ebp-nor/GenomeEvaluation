@@ -4,7 +4,7 @@ channels:
   - conda-forge
 dependencies:
   - busco=5
-  - snakemake=8
+  - snakemake=7
   - seqkit
   - bcftools
   - merqury
@@ -13,3 +13,6 @@ dependencies:
   - samtools
   - pretextsnapshot
   - pretextmap
+  - seqtk
+  - blobtk
+  - mmseqs2

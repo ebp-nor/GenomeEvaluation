@@ -13,12 +13,15 @@
 
 #load conda environment
 
+conda activate eval_pipeline
+
+
 
 snakemake \
-  --profile /path/to/profile/profile \
+  --profile /cluster/projects/nn8013k/opt/evaluation_pipeline/GenomeEvaluation/workflow/profile/ \
   --configfile $1 \
   --directory . \
-  --snakefile /path/to/Snakefile \
+  --snakefile /cluster/projects/nn8013k/opt/evaluation_pipeline/GenomeEvaluation/workflow/Snakefile \
   --max-status-checks-per-second 0.01 \
   all
 
