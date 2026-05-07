@@ -131,6 +131,7 @@ rule busco_hap1:
             -l {input.busco} \
             -c {params.threads} \
             -m genome \
+            -f \
             --offline \
             --out_path results/busco \
             -o busco_hap1_{params.lineage} \
@@ -157,6 +158,7 @@ rule busco_hap2:
             -l {input.busco} \
             -c {params.threads} \
 	    -m genome \
+            -f \
             --offline \
             --out_path results/busco \
             -o busco_hap2_{params.lineage} \
@@ -378,7 +380,7 @@ rule paftools:
         cd results
         mkdir -p paf
         cd paf
-        minimap2 -t {params.t} -cx asm5 --cs ../../{input.hap1_asm} ../../{input.hap2_asm} | sort -k6,6 -k8,8n  > {params.prefix}.paf
+        minimap2 -t {params.t} -cx asm20 --cs ../../{input.hap1_asm} ../../{input.hap2_asm} | sort -k6,6 -k8,8n  > {params.prefix}.paf
         cat {params.prefix}.paf |paftools.js call - 1> /dev/null 2> report
         """
 
@@ -665,9 +667,11 @@ rule blobtools_uniprot_hap1:
         cd mmseqs_uniprot
         mkdir -p $USERWORK/$SLURM_JOB_ID
         rm -rf hap1_results_proteomes*
-        mmseqs search -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 1 ../../{input.hap1_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap1_results_proteomes $USERWORK/$SLURM_JOB_ID/hap1_prot_tmp
+        mmseqs search -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 1 ../../{input.hap1_db} \
+        /cluster/projects/nn8013k/opt/databases/uniprot/reference_proteomeDB \
+        hap1_results_proteomes $USERWORK/$SLURM_JOB_ID/hap1_prot_tmp
 
-        mmseqs convertalis ../../{input.hap1_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap1_results_proteomes hap1_mmseqs_proteomes.out \
+        mmseqs convertalis ../../{input.hap1_db} /cluster/projects/nn8013k/opt/databases/uniprot/reference_proteomeDB hap1_results_proteomes hap1_mmseqs_proteomes.out \
         --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
         """
 
@@ -688,9 +692,11 @@ rule blobtools_uniprot_hap2:
         cd mmseqs_uniprot
         mkdir -p $USERWORK/$SLURM_JOB_ID/
         rm -rf hap2_results_proteomes*
-        mmseqs search -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 1 ../../{input.hap2_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap2_results_proteomes $USERWORK/$SLURM_JOB_ID/hap2_prot_tmp
+        mmseqs search -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 1 ../../{input.hap2_db} \
+        /cluster/projects/nn8013k/opt/databases/uniprot/reference_proteomeDB \
+        hap2_results_proteomes $USERWORK/$SLURM_JOB_ID/hap2_prot_tmp
 
-        mmseqs convertalis ../../{input.hap2_db} /cluster/projects/nn9244k/olekto/databases/uniprot/reference_proteomeDB hap2_results_proteomes hap2_mmseqs_proteomes.out \
+        mmseqs convertalis ../../{input.hap2_db} /cluster/projects/nn8013k/opt/databases/uniprot/reference_proteomeDB hap2_results_proteomes hap2_mmseqs_proteomes.out \
         --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
         """
 
@@ -724,11 +730,11 @@ rule blobtools_nt_hap1:
         mmseqs createdb hap1_no_hit.fa hap1_no_hitDB 
 
         mkdir -p $USERWORK/$SLURM_JOB_ID/
-        mmseqs search --split-memory-limit 100G -e 1e-25  --threads {params.t} -s 5.0 -a --max-accept 10 hap1_no_hitDB /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB  \
+        mmseqs search --split-memory-limit 100G -e 1e-25  --threads {params.t} -s 5.0 -a --max-accept 10 hap1_no_hitDB /cluster/projects/nn8013k/opt/databases/nt/nt.fnaDB  \
         hap1_results_nt $USERWORK/$SLURM_JOB_ID/hap1_nt_tmp --search-type 3
 
         mmseqs convertalis hap1_no_hitDB \
-        /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB \
+        /cluster/projects/nn8013k/opt/databases/nt/nt.fnaDB \
         hap1_results_nt hap1_mmseqs_nt.out --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
         """
 
@@ -763,11 +769,11 @@ rule blobtools_nt_hap2:
         mmseqs createdb hap2_no_hit.fa hap2_no_hitDB
 
         mkdir -p $USERWORK/$SLURM_JOB_ID/
-        mmseqs search --split-memory-limit 100G -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 10 hap2_no_hitDB /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB  \
+        mmseqs search --split-memory-limit 100G -e 1e-25 --threads {params.t} -s 5.0 -a --max-accept 10 hap2_no_hitDB /cluster/projects/nn8013k/opt/databases/nt/nt.fnaDB  \
         hap2_results_nt $USERWORK/$SLURM_JOB_ID/hap2_nt_tmp --search-type 3
  
         mmseqs convertalis hap2_no_hitDB \
-        /cluster/projects/nn9244k/olekto/databases/nt/nt.fnaDB \
+        /cluster/projects/nn8013k/opt/databases/nt/nt.fnaDB \
         hap2_results_nt hap2_mmseqs_nt.out --format-output "query,taxid,bits,query,target,pident,alnlen,mismatch,gapopen,qstart,qend,tstart,tend,evalue,bits"
         """
 

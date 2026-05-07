@@ -12,7 +12,7 @@ jobs: 50
 cluster:
   mkdir -p logs/{rule} &&
   sbatch
-    --account=nn9244k
+    --account=nn8013k
     --partition={resources.partition}
     --time={resources.time}
     --mem-per-cpu={resources.mem_per_cpu}
