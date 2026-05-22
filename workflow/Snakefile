@@ -958,6 +958,9 @@ rule collect_and_rename_figures:
            name=$(basename $i)
            cp $i results/figures/{params.prefix}_$name
        done      
+       svg_stack.py --direction=h --margin=5  results/figures/{params.prefix}_hap1_blob_plot.svg results/figures/{params.prefix}_hap2_blob_plot.svg  > results/figures/{params.prefix}_blob_plot_concat.svg
+       svg_stack.py --direction=h --margin=5  results/figures/{params.prefix}_hap1_snail_plot.svg  results/figures/{params.prefix}_hap2_snail_plot.svg  > results/figures/{params.prefix}_snail_plot_concat.svg
+       gm convert results/figures/{params.prefix}_hap1_chrs_bwa_map_FullMap.png results/figures/{params.prefix}_hap2_chrs_bwa_map_FullMap.png +append results/figures/{params.prefix}_chrs_combined.png
        """
 
 rule annotation_stats:
